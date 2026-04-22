@@ -1,0 +1,59 @@
+name: Build KVM Kernel for A51
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Build Environment
+        run: |
+          sudo apt update
+          sudo apt install -y git-core gnupg flex bison gperf build-essential zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 libncurses-dev x11proto-core-dev libx11-dev lib32z1-dev ccache libgl1-mesa-dev libxml2-utils xsltproc unzip bc python3 python-is-python3 clang lld llvm
+
+      - name: Pull Source and Toolchain
+        run: |
+          # Cloning the most stable source for A51
+          git clone --depth=1 https://github.com/ianmacd/a51xx source
+          # Cloning Proton Clang - this is the best toolchain for Exynos kernels
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang toolchain
+
+      - name: Enable KVM Support
+        run: |
+          cd source
+          echo "CONFIG_KVM=y" >> arch/arm64/configs/exynos9611-a51_defconfig
+          echo "CONFIG_VIRTUALIZATION=y" >> arch/arm64/configs/exynos9611-a51_defconfig
+          echo "CONFIG_KVM_ARM_HOST=y" >> arch/arm64/configs/exynos9611-a51_defconfig
+
+      - name: Compile Kernel
+        run: |
+          cd source
+          export PATH=$(pwd)/../toolchain/bin:$PATH
+          
+          # This is the "Magic" part that kills the Recursive CC error:
+          # We tell the system NOT to export CC to sub-makes
+          unexport CC
+          unexport CROSS_COMPILE
+          
+          # Build arguments for Clang
+          MAKE_ARGS="ARCH=arm64 \
+                     O=out \
+                     CC=clang \
+                     CROSS_COMPILE=aarch64-linux-gnu- \
+                     CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+                     LD=ld.lld \
+                     AR=llvm-ar \
+                     NM=llvm-nm \
+                     OBJCOPY=llvm-objcopy \
+                     OBJDUMP=llvm-objdump \
+                     STRIP=llvm-strip"
+
+          make $MAKE_ARGS clean
+          make $MAKE_ARGS exynos9611-a51_defconfig
+          make $MAKE_ARGS -j$(nproc)
+
+      - name: Upload Result
+        uses: actions/upload-artifact@v4
+        with:
+          name: KVM-Kernel-A51
+          path: source/out/arch/arm64/boot/Image.gz-dtb
+          
